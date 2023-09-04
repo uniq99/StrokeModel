@@ -298,7 +298,9 @@ cat('Accuracy is', 100*mean(avNNET_preds[,1] == df_test$stroke), '% over the tes
 
 # Task Four: Findings and Conclusions
 
-We can see that the models were fairly accurate with above 93% accuracy. The SVM and avNNET models were the most accurate of the four and will be able to be used with close to 95% accuracy on the test set. Although none were 99% or higher, there is confidence that the model will be able to predict whether the person will have a stroke or not depending on different factors of the person.
+We can see that the models were fairly accurate with above 93% accuracy. 
+The SVM and avNNET models were the most accurate of the four and will be able to be used with close to 95% accuracy on the test set. 
+Although none were 99% or higher, there is confidence that the model will be able to predict whether the person will have a stroke or not depending on different factors of the person.
 
 
 
