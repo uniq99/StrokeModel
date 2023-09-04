@@ -1,0 +1,331 @@
+---
+title: "Build a stroke prediction model using R"
+author: "Seungwoo Yu"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# About Data Analysis Report
+
+This RMarkdown file contains the report of the data analysis done for the project on building and deploying a stroke prediction model in R. It contains analysis such as data exploration, summary statistics and building the prediction models. The final report was completed on `r date()`. 
+
+**Data Description:**
+
+According to the World Health Organization (WHO) stroke is the 2nd leading cause of death globally, responsible for approximately 11% of total deaths.
+
+This data set is used to predict whether a patient is likely to get stroke based on the input parameters like gender, age, various diseases, and smoking status. Each row in the data provides relevant information about the patient.
+
+
+# Task One: Import data and data preprocessing
+
+## Load data and install packages
+
+```{r message=FALSE, warning=FALSE}
+library(caret)
+library(dplyr)
+library(randomForest)
+library(nnet)
+library(MASS)
+library(e1071)
+library(tidymodels)
+df <- read.csv('healthcare-dataset-stroke-data.csv')
+head(df)
+```
+We see that there are some things that need to be remove such as id and need to remove N/A that appear
+```{r}
+str(df)
+```
+BMI is not an integer because of the N/A values and need to be changed to a numeric variable.
+Hypertension, heart_disease, and stroke need to be changed to character variable.
+Need to remove the first column of the data set as it is not used in our model and has no significance to the probability of having a stroke.
+
+
+
+#### Changed bmi to numeric and tried to count how many N/A were in the dataset
+```{r warning=FALSE}
+df$bmi <- as.numeric(df$bmi)
+apply(X = is.na(df), MARGIN = 2, FUN = sum)
+```
+
+#### Missing N/A values were replaced with the mean of the BMI values for the model
+```{r warning=FALSE}
+df$bmi[is.na(df$bmi)] <- mean(df$bmi, na.rm = TRUE)
+```
+#### Removed id column 
+```{r}
+df <- df[,-1]
+```
+
+#### Convert 0s and 1s to No and Yes
+```{r}
+df$hypertension[df$hypertension == '0'] <- "No"
+df$hypertension[df$hypertension == '1'] <- "Yes"
+df$heart_disease[df$heart_disease == '0'] <- "No"
+df$heart_disease[df$heart_disease == '1'] <- "Yes"
+df$stroke[df$stroke == 1] <- "Yes"
+df$stroke[df$stroke == 0] <- "No"
+str(df)
+```
+#### Table columns to make sure there are no unwanted rows
+```{r}
+table(df$gender)
+table(df$hypertension)
+table(df$heart_disease)
+table(df$work_type)
+table(df$Residence_type)
+table(df$smoking_status)
+table(df$ever_married)
+```
+
+```{r}
+df <- subset(df, df$gender != 'Other')
+write.csv(df, 'df.csv', row.names = FALSE)
+```
+
+
+
+
+
+## Describe and explore the data
+
+#### Gender to Stroke Ratio
+
+```{r message=FALSE, warning=FALSE}
+ggplot(df, aes(x = gender, fill = factor(stroke))) +
+  geom_bar()
+```
+We can see that from this data there is no difference between gender on who is more likely to get a stroke
+
+#### Age to Stroke Ratio
+```{r}
+ggplot(df, aes(y = age, fill= factor(stroke))) +
+  geom_boxplot()
+```
+
+#### Hypertension to Stroke Ratio
+
+```{r}
+ggplot(df, aes(x = hypertension, fill = factor(stroke))) +
+  geom_bar() 
+```
+
+#### Heart disease to Stroke Ratio
+```{r}
+ggplot(df, aes(x = heart_disease, fill = factor(stroke))) +
+  geom_bar()
+```
+
+#### Married to Stroke Ratio
+```{r}
+ggplot(df, aes(x = ever_married, fill = factor(stroke))) +
+  geom_bar()
+```
+
+#### Work type to Stroke Ratio
+```{r}
+ggplot(df, aes(x = work_type, fill = factor(stroke))) +
+  geom_bar()
+```
+
+#### Residence Type
+```{r}
+ggplot(df, aes(x = Residence_type, fill = factor(stroke))) +
+  geom_bar()
+```
+
+#### Glucose Level
+```{r}
+ggplot(df, aes(y = avg_glucose_level, fill = factor(stroke))) +
+  geom_boxplot()
+```
+
+#### Bmi Ratio
+```{r}
+ggplot(df, aes(y = bmi, fill = factor(stroke))) +
+  geom_boxplot()
+```
+
+#### Smoking Ratio
+```{r}
+ggplot(df, aes(x = smoking_status, fill = factor(stroke))) +
+  geom_bar()
+```
+
+#### Set the stroke column as a Factor
+```{r}
+df['stroke'] <- lapply(df['stroke'], factor)
+```
+
+#### Intercept for the Model
+```{r}
+df_ratio <- glm(stroke~., df, family = 'binomial')
+summary(df_ratio)
+```
+
+The glm() function was used as there are characters that are in the data.
+We see that the intercept if heavily skewed towards not having a stroke.
+The highest factor of having a stroke is hypertension with a coefficient of ~0.4.
+This will be used for the ratio of the dim factor when splitting the data into test and training splits
+
+#### Ratio for train/test split
+```{r}
+ratio <- summary(df_ratio)$coefficients[4,1]
+ratio
+```
+
+# Task Two: Build prediction models
+
+#### Rearrange column so that stroke is first
+```{r message=FALSE, warning=FALSE}
+df <- df %>%
+  dplyr::select(stroke, gender, age, hypertension, heart_disease, ever_married, work_type, Residence_type, avg_glucose_level, bmi, smoking_status)
+```
+
+#### Initial Split
+
+```{r}
+df_split <- initial_split(df, prop = ratio)
+df_split
+```
+
+#### Train/Test Split
+
+```{r}
+df_train <- training(df_split)
+df_test <- testing(df_split)
+```
+
+#### Define 10 fold CV
+
+```{r}
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 11,
+                           repeats = 11,
+                           classProbs = TRUE)
+```
+
+#### Random Forest Model
+
+```{r}
+rf_fit <- randomForest(stroke ~.,
+                       family = "binomial",
+                       data = df_train,
+                       trControl = fitControl,
+                       ntree = 500,
+                       metric = "Accuracy")
+rf_fit
+model_rf_Medium <- rf_fit
+save(model_rf_Medium, file = 'model_rf_Medium.Rdata')
+```
+
+#### QDA model
+
+```{r}
+qda_fit <- train(stroke ~.,
+                 data = df_train,
+                 method = 'lda',
+                 trControl = fitControl,
+                 metric = 'Accuracy')
+qda_fit
+```
+
+#### SVM linear Model
+
+```{r}
+svm_fit <- svm(stroke ~.,
+               type = 'C-classification',
+               kernel = "linear", # can also be 'radial'
+               data = df_train,
+               cross = 10, #10-fold CV
+               probability = TRUE,
+               metric = 'Accuracy')
+svm_fit
+```
+
+#### Averaged Neural Network (avNNET) Model
+
+```{r}
+avNNET_fit <- avNNet(stroke ~.,
+                     repeats = 20,
+                     data = df_train,
+                     bag = TRUE,
+                     trControl = fitControl,
+                     size = 1,
+                     maxit = 10000)
+avNNET_fit
+```
+
+# Task Three: Evaluate and select prediction models
+
+### Predictions for each Model
+
+#### Rf Model
+
+```{r message=FALSE, warning=FALSE}
+preds <- as.data.frame(predict(rf_fit, df_test, type = "class"))
+
+cat('Accuracy is', 100*mean(preds[,1] == df_test$stroke), '% over the test set')
+```
+
+#### QDA Model
+
+```{r}
+qda_preds <- as.data.frame(predict(qda_fit, df_test, type = "raw"))
+
+cat('Accuracy is', 100*mean(qda_preds[,1] == df_test$stroke), '% over the test set')
+```
+
+#### SVM Model
+
+```{r}
+svm_preds <- as.data.frame(predict(svm_fit, df_test, type = "class"))
+
+cat('Accuracy is', 100*mean(svm_preds[,1] == df_test$stroke), '%over the test set')
+```
+
+#### avNNET Model
+
+```{r warning=FALSE}
+avNNET_preds <- as.data.frame(predict(avNNET_fit, df_test, type = "class"))
+
+cat('Accuracy is', 100*mean(avNNET_preds[,1] == df_test$stroke), '% over the test set')
+
+```
+
+
+
+# Task Four: Findings and Conclusions
+
+We can see that the models were fairly accurate with above 93% accuracy. The SVM and avNNET models were the most accurate of the four and will be able to be used with close to 95% accuracy on the test set. Although none were 99% or higher, there is confidence that the model will be able to predict whether the person will have a stroke or not depending on different factors of the person.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
